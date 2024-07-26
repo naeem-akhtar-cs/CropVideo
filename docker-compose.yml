@@ -1,0 +1,22 @@
+services:
+  web:
+    build: .
+    command: gunicorn --bind 0.0.0.0:5000 app:app
+    volumes:
+      - .:/app
+    ports:
+      - "80:5000"
+    depends_on:
+      - redis
+      - worker
+
+  redis:
+    image: "redis:alpine"
+
+  worker:
+    build: .
+    command: sh -c "celery -A app.celery worker --loglevel=info -c 1"
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
