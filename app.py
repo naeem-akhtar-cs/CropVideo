@@ -6,7 +6,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-from flask import Flask, request, jsonify, send_file, after_this_request
+from flask import Flask, request, jsonify, send_file, after_this_request, make_response
 from celery import Celery
 from celery.result import AsyncResult
 
@@ -44,7 +44,7 @@ def getAirtableRecords(offset, tableId):
     url = f"{baseUrl}/{AIRTABLE_BASE_ID}/{tableId}"
     headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
 
-    params = {"view": AIRTABLE_VIEW_ID, 'filterByFormula': '{Video Processed} = False()'}
+    params = {}
     if offset is not None:
         params["offset"] = offset
 
@@ -196,10 +196,9 @@ def cropVideos():
     return jsonify({"status": 200, "message": "Processing started!!"})
 
 
-@app.route('/*')
-def cropVideos():
-    return jsonify({"status": 404, "message": "Invalid route"})
-
+@app.route('/<path:path>')
+def defaultRoute(path):
+    return make_response(jsonify({"status": 404, "message": "Invalid route"}), 404)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
