@@ -20,6 +20,7 @@ AIRTABLE_LONG_FORMAT_TABLE_ID = os.getenv("AIRTABLE_LONG_FORMAT_TABLE_ID")
 AIRTABLE_SHORT_FORMAT_TABLE_ID = os.getenv("AIRTABLE_SHORT_FORMAT_TABLE_ID")
 
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+SPLIT_VIDEO_LENGTH = os.getenv("SPLIT_VIDEO_LENGTH")
 
 baseUrl = "https://api.airtable.com/v0"
 driveDownloadBaseUrl = "https://drive.google.com/uc?export=download&id="
@@ -76,6 +77,7 @@ def getAirtableRecords(offset, tableId):
 
 def downloadVideo(videoUrl, folderName, recordId):
     fileName = f"{recordId}"
+    videoUrl = "https://drive.google.com/uc?id=143XJTcDAdkelhq_cwViKKXCCmbeeeenj&export=download"
     response = requests.get(url=videoUrl, stream=True)
     with open(f"{folderName}/{fileName}.mp4", "wb") as writer:
         for chunk in response.iter_content(chunk_size=8192):
@@ -133,48 +135,48 @@ def uploadToDrive(filePath, fileName):
     return fileUrl
 
 
+def splitVideo(folderName, fileName, splitLength):
+    filePath = f"{folderName}/{fileName}.mp4"
+
+    ffprobeCommand = [
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1", filePath
+    ]
+    output = subprocess.check_output(ffprobeCommand).decode("utf-8").strip()
+    duration = float(output)
+
+    numSegments = math.ceil(duration / splitLength)
+    splittedVideos = []
+    for i in range(numSegments):
+        startTime = i * splitLength
+
+        splittedFileName = f"{fileName}_{i:03d}.mp4"
+        splittedVideos.append(splittedFileName)
+        outputFile = f"{folderName}/{splittedFileName}"
+        
+        ffmpegCommand = [
+            "ffmpeg", "-i", filePath, "-ss", str(startTime),
+            "-t", str(splitLength), "-c", "copy", outputFile
+        ]
+        subprocess.run(ffmpegCommand, check=True)
+    return splittedVideos
+
+
 @celery.task()
-def processVideoTask(record, processedVideos, processingSpecs):
+def processVideoTask(record, processedVideos):
     recordId = record["id"]
     recordFields = record["fields"]
     fileName = downloadVideo(recordFields["Google Drive URL"], processedVideos, recordId)
 
-    variantsList = []
-    for specs in processingSpecs:
-        processVideo(processedVideos, fileName, specs)
-
-        randomNumber = random.randint(1000, 9999)
-        fileUrl = uploadToDrive(f"{processedVideos}/{fileName}_{specs['VariantId']}.mov", f"IMG_{randomNumber}.MOV")
-
-        variant = {
-            "variantId": specs["VariantId"],
-            "fileUrl": fileUrl,
-            "fileName": f"IMG_{randomNumber}.MOV",
-            "randomNumber": randomNumber
-        }
-        variantsList.append(variant)
-
-    newRecordData = {
-        "recordId": recordId,
-        "tiktokUrl": record["fields"]["Video URL"],
-        "soundUrl": record["fields"]["short sound url"],
-        "variantsList": variantsList
-    }
-
-    addDataToAirTable(newRecordData)
-    status = updateRecordStatus({"recordId": recordId})
-    if not status:
-        print(f"Could not update status in linked table for record: {recordId}")
-
-    for variant in variantsList:
-        filePath = f"{processedVideos}/{fileName}_{variant['variantId']}.mov"
-        removeFile(filePath)
+    splitLength = float(SPLIT_VIDEO_LENGTH)
+    splittedVideos = splitVideo(processedVideos, fileName, splitLength)
+    os.remove(f"{processedVideos}/{fileName}.mp4")
+    print(splittedVideos)
 
 
-
-@app.route('/cropVideos')
-def cropVideos():
-    processedVideos = "ProcessedVideos"
+@app.route('/splitVideos')
+def splitVideos():
+    processedVideos = "VideosDir"
 
     checkDir(processedVideos)
     removeFiles(processedVideos)
@@ -190,7 +192,8 @@ def cropVideos():
 
         if records:
             for record in records:
-                processVideoTask.delay(record, processedVideos, processingSpecs)
+                # processVideoTask.delay(record, processedVideos)
+                processVideoTask(record, processedVideos)
         firstRequest = False
 
     return jsonify({"status": 200, "message": "Processing started!!"})
@@ -199,6 +202,7 @@ def cropVideos():
 @app.route('/<path:path>')
 def defaultRoute(path):
     return make_response(jsonify({"status": 404, "message": "Invalid route"}), 404)
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
