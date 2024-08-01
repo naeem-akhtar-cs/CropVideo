@@ -268,8 +268,8 @@ def processLongVideos(record, processedVideos):
             "LongFormat": [recordId],
         }
         addDataToAirTable(shortFormatRecord)
-        updateRecordStatus(recordId)
         removeFile(filePath)
+    updateRecordStatus(recordId)
 
 
 @app.route('/splitVideos')
